@@ -1,111 +1,22 @@
-import os
 from datetime import datetime, timezone
-from dotenv import load_dotenv
-from flask import Flask, request
 from flask_cors import CORS
+from flask import Flask, request
 from models import db, User, Event, Permission, AuditLog
-
-load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-
-# Database configuration via environment variable with SQLite fallback
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL", "sqlite:///chronis.db"
-)
+# Configure the SQLite database
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///chronis.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Connect SQLAlchemy to Flask
 db.init_app(app)
 
-CATEGORIES = [
-    "conversation",
-    "location",
-    "physiological",
-    "note",
-]
-
-
-def init_db(app_instance):
-    """Initialize database tables and default demo seed data."""
-    with app_instance.app_context():
-        db.create_all()
-
-        # Create demo user if it does not exist
-        user = db.session.get(User, 1)
-        if user is None:
-            user = User(id=1, name="Demo User")
-            db.session.add(user)
-            db.session.commit()
-
-        # Create default permissions for all categories
-        for category in CATEGORIES:
-            permission = Permission.query.filter_by(
-                user_id=user.id,
-                event_type=category,
-            ).first()
-
-            if permission is None:
-                permission = Permission(
-                    user_id=user.id,
-                    event_type=category,
-                    enabled=True,
-                )
-                db.session.add(permission)
-
-        db.session.commit()
-
-        # Seed sample demo events if the events table is empty
-        if Event.query.filter_by(user_id=user.id).count() == 0:
-            demo_events = [
-                Event(
-                    user_id=user.id,
-                    timestamp=datetime.now(timezone.utc),
-                    type="conversation",
-                    title="Coffee Chat with Sarah",
-                    content="Discussed Q4 product vision and privacy-first personal timeline concepts.",
-                ),
-                Event(
-                    user_id=user.id,
-                    timestamp=datetime.now(timezone.utc),
-                    type="location",
-                    title="Deep Work at Central Library",
-                    content="3-hour focused session completing system architecture diagrams.",
-                ),
-                Event(
-                    user_id=user.id,
-                    timestamp=datetime.now(timezone.utc),
-                    type="physiological",
-                    title="Morning Cardio Session",
-                    content="Average heart rate 142 bpm. Completed 5 km outdoor run.",
-                ),
-                Event(
-                    user_id=user.id,
-                    timestamp=datetime.now(timezone.utc),
-                    type="note",
-                    title="Architecture Principle",
-                    content="Privacy must be enforced strictly at the database query layer, never solely in UI.",
-                ),
-            ]
-            db.session.add_all(demo_events)
-            db.session.commit()
-
 
 # Home route
 @app.route("/", methods=["GET"])
 def home():
-    return {
-        "message": "Chronis API is running!",
-        "version": "1.0.0",
-        "endpoints": [
-            "/events",
-            "/events/<id>",
-            "/permissions",
-            "/permissions/<type>",
-            "/audit-log",
-        ],
-    }
+    return {"message": "Chronis API is running!"}
 
 
 # Get all privacy permissions
@@ -122,13 +33,18 @@ def get_permissions():
 # Update a privacy permission
 @app.route("/permissions/<string:event_type>", methods=["PUT"])
 def update_permission(event_type):
-    user_id = 1  # Demo user
+    categories = [
+        "conversation",
+        "location",
+        "physiological",
+        "note",
+    ]
 
-    if event_type not in CATEGORIES:
+    if event_type not in categories:
         return {"error": "Invalid event category"}, 400
 
     permission = Permission.query.filter_by(
-        user_id=user_id,
+        user_id=1,
         event_type=event_type,
     ).first()
 
@@ -144,23 +60,12 @@ def update_permission(event_type):
         return {"error": "enabled must be true or false"}, 400
 
     permission.enabled = data["enabled"]
-
-    # Record privacy permission update in audit log
-    db.session.add(
-        AuditLog(
-            user_id=user_id,
-            action="update_permission",
-            event_type=event_type,
-            result="success",
-        )
-    )
     db.session.commit()
 
     return {
         "event_type": permission.event_type,
         "enabled": permission.enabled,
     }
-
 
 # Get events with privacy checks, filtering, and pagination
 @app.route("/events", methods=["GET"])
@@ -178,20 +83,35 @@ def get_events():
             "error": "page must be >= 1 and per_page must be between 1 and 100"
         }, 400
 
-    # Validate the requested category if provided
-    if event_type and event_type not in CATEGORIES:
+    categories = [
+        "conversation",
+        "location",
+        "physiological",
+        "note",
+    ]
+
+    # Validate the requested category
+    if event_type and event_type not in categories:
         return {"error": "Invalid event category"}, 400
 
     # Load permissions for this user
-    permissions = Permission.query.filter_by(user_id=user_id).all()
-    permission_map = {p.event_type: p.enabled for p in permissions}
+    permissions = Permission.query.filter_by(
+        user_id=user_id
+    ).all()
 
-    # Only explicitly enabled categories are allowed to be fetched
+    permission_map = {
+        permission.event_type: permission.enabled
+        for permission in permissions
+    }
+
+    # Only explicitly enabled categories are allowed
     enabled_categories = [
-        category for category in CATEGORIES if permission_map.get(category, False)
+        category
+        for category in categories
+        if permission_map.get(category, False)
     ]
 
-    # Helper to record an audit entry
+    # Record an audit entry for this request
     def record_audit(action, category, result):
         db.session.add(
             AuditLog(
@@ -202,29 +122,16 @@ def get_events():
             )
         )
 
-    # Block access if the requested category filter is explicitly disabled
+    # Block access if the requested category is disabled
     if event_type and not permission_map.get(event_type, False):
         record_audit("read_events", event_type, "blocked")
         db.session.commit()
+
         return {
             "error": "Access denied: this event category is disabled"
         }, 403
 
-    # If no categories are enabled, return an empty set immediately
-    if not enabled_categories:
-        record_audit("read_events", event_type, "success")
-        db.session.commit()
-        return {
-            "events": [],
-            "pagination": {
-                "page": page,
-                "per_page": per_page,
-                "total": 0,
-                "total_pages": 0,
-            },
-        }, 200
-
-    # Query strictly filters to enabled categories only
+    # Filter to enabled categories only
     query = Event.query.filter(
         Event.user_id == user_id,
         Event.type.in_(enabled_categories),
@@ -237,7 +144,7 @@ def get_events():
     # Count matching events before pagination
     total = query.count()
 
-    # Apply pagination and sorting (newest first)
+    # Apply pagination
     events = (
         query.order_by(Event.timestamp.desc(), Event.id.desc())
         .offset((page - 1) * per_page)
@@ -264,10 +171,9 @@ def get_events():
             "page": page,
             "per_page": per_page,
             "total": total,
-            "total_pages": (total + per_page - 1) // per_page if total > 0 else 0,
+            "total_pages": (total + per_page - 1) // per_page,
         },
     }, 200
-
 
 # Create a new event
 @app.route("/events", methods=["POST"])
@@ -291,8 +197,14 @@ def create_event():
         }, 400
 
     event_type = data["type"]
+    categories = [
+        "conversation",
+        "location",
+        "physiological",
+        "note",
+    ]
 
-    if event_type not in CATEGORIES:
+    if event_type not in categories:
         return {"error": "Invalid event category"}, 400
 
     permission = Permission.query.filter_by(
@@ -316,23 +228,12 @@ def create_event():
             "error": "Access denied: this event category is disabled"
         }, 403
 
-    # Allow custom timestamp or default to now (UTC)
-    event_timestamp = datetime.now(timezone.utc)
-    if "timestamp" in data and data["timestamp"]:
-        try:
-            ts_str = str(data["timestamp"]).replace("Z", "+00:00")
-            event_timestamp = datetime.fromisoformat(ts_str)
-        except (ValueError, TypeError):
-            return {
-                "error": "Invalid timestamp format. Expected ISO-8601 string."
-            }, 400
-
     event = Event(
         user_id=user_id,
-        timestamp=event_timestamp,
+        timestamp=datetime.now(timezone.utc),
         type=event_type,
-        title=data["title"].strip(),
-        content=data["content"].strip(),
+        title=data["title"],
+        content=data["content"],
     )
 
     db.session.add(event)
@@ -354,7 +255,6 @@ def create_event():
         "title": event.title,
         "content": event.content,
     }, 201
-
 
 # Get one event by ID, respecting privacy permissions
 @app.route("/events/<int:event_id>", methods=["GET"])
@@ -409,7 +309,6 @@ def get_event(event_id):
         "content": event.content,
     }, 200
 
-
 # Delete an event, respecting privacy permissions
 @app.route("/events/<int:event_id>", methods=["DELETE"])
 def delete_event(event_id):
@@ -463,7 +362,6 @@ def delete_event(event_id):
         "id": event_id,
     }, 200
 
-
 # View the audit log (read-only)
 @app.route("/audit-log", methods=["GET"])
 def get_audit_log():
@@ -494,7 +392,40 @@ def get_audit_log():
 
 # Create database tables and demo data, then start server
 if __name__ == "__main__":
-    init_db(app)
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    with app.app_context():
+        db.create_all()
 
+        # Create demo user if it does not exist
+        user = db.session.get(User, 1)
+
+        if user is None:
+            user = User(name="Demo User")
+            user.id = 1
+            db.session.add(user)
+            db.session.commit()
+
+        # Create default permissions
+        categories = [
+            "conversation",
+            "location",
+            "physiological",
+            "note",
+        ]
+
+        for category in categories:
+            permission = Permission.query.filter_by(
+                user_id=user.id,
+                event_type=category,
+            ).first()
+
+            if permission is None:
+                permission = Permission(
+                    user_id=user.id,
+                    event_type=category,
+                    enabled=True,
+                )
+                db.session.add(permission)
+
+        db.session.commit()
+
+    app.run(debug=True)

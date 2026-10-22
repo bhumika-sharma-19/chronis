@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import MemoryTimeline from "./components/MemoryTimeline";
 import CreateMemory from "./components/CreateMemory";
@@ -6,10 +7,10 @@ import AuditLog from "./components/AuditLog";
 import "./App.css";
 
 export default function App() {
-  const [refreshCount, setRefreshCount] = useState(0);
+  const [timelineRefresh, setTimelineRefresh] = useState(0);
 
-  function handleDataChange() {
-    setRefreshCount((value) => value + 1);
+  function refreshTimeline() {
+    setTimelineRefresh((value) => value + 1);
   }
 
   return (
@@ -19,25 +20,22 @@ export default function App() {
           <div className="brand-icon">◈</div>
           <div>
             <h1>Chronis</h1>
-            <p>Privacy-aware memory timeline</p>
+            <p>Your personal memory timeline</p>
           </div>
         </div>
 
         <span className="status-label">
-          Privacy-Aware Storage
+          Privacy-aware memory
         </span>
       </header>
 
-      <PrivacyControls onChanged={handleDataChange} />
+      <PrivacyControls onChanged={refreshTimeline} />
 
-      <CreateMemory onCreated={handleDataChange} />
+      <CreateMemory onCreated={refreshTimeline} />
 
-      <MemoryTimeline
-        refreshKey={refreshCount}
-        onEventDeleted={handleDataChange}
-      />
+      <MemoryTimeline key={timelineRefresh} />
 
-      <AuditLog refreshKey={refreshCount} />
+      <AuditLog />
     </main>
   );
 }

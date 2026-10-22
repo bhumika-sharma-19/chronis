@@ -1,344 +1,243 @@
-# Chronis: Mini Privacy-Aware Memory Timeline
+# Chronis — Privacy-Aware Memory Timeline
 
-A privacy-first timeline application that captures daily user events across multiple categories (`conversation`, `location`, `physiological`, `note`), enforces category-level access permissions strictly at the backend query layer, and maintains an immutable, read-only audit log for all data access and permission changes.
+Chronis is a small full-stack application that stores a user's daily events, displays them in a chronological timeline, and allows category-level privacy controls. The backend enforces permissions before returning or modifying event data and records important actions in an audit log.
 
----
+## Features
 
-## 1. System Architecture
+- Create, retrieve, and delete memory events.
+- Filter events by type and paginate results.
+- Manage privacy permissions for `conversation`, `location`, `physiological`, and `note`.
+- Enforce category permissions on the backend.
+- Record important data-access and privacy actions in an audit log.
+- Display events, privacy controls, and audit records through a React frontend.
+- Run automated backend tests with pytest.
 
+## Technology Stack
+
+- **Backend:** Python, Flask, Flask-SQLAlchemy
+- **Database:** SQLite
+- **Frontend:** React, Vite
+- **Testing:** pytest
+- **Cross-origin requests:** Flask-CORS
+
+## Project Structure
+
+```text
+chronis/
+├── backend/
+│   ├── app.py
+│   ├── models.py
+│   ├── requirements.txt
+│   └── tests/
+│       └── test_app.py
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── api.js
+│   │   ├── App.jsx
+│   │   └── App.css
+│   └── package.json
+├── .gitignore
+└── README.md
 ```
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                  Frontend (React + Vite SPA)                    │
-   │  • Category Filter Buttons     • Privacy Toggle Switches (ON/OFF)│
-   │  • Chronological Memory Cards  • Pagination Controls            │
-   │  • Event Deletion & Creation   • Real-Time Audit Log View       │
-   └────────────────────────────────┬────────────────────────────────┘
-                                    │ HTTP / REST JSON
-                                    ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                     Backend API (Flask)                         │
-   │  • /events (GET, POST)         • /permissions (GET, PUT)        │
-   │  • /events/<id> (GET, DELETE)  • /audit-log (GET, Read-Only)    │
-   │                                                                 │
-   │           ┌─────────────────────────────────────────┐           │
-   │           │   Backend Authorization Guard (Policy)  │           │
-   │           │ • Checks active category permission     │           │
-   │           │ • Filters SQL query by enabled types    │           │
-   │           │ • Emits audit records (success/blocked) │           │
-   │           └────────────────────┬────────────────────┘           │
-   └────────────────────────────────┼────────────────────────────────┘
-                                    ▼
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                     Database (SQLite / SQL)                     │
-   │  • users (id, name)                                             │
-   │  • events (id, user_id, timestamp, type, title, content)        │
-   │  • permissions (id, user_id, event_type, enabled)               │
-   │  • audit_logs (id, timestamp, user_id, action, event_type, res) │
-   └─────────────────────────────────────────────────────────────────┘
-```
 
-### Core Architecture Highlights
-- **Strict Query-Level Authorization:** Category permissions are evaluated prior to database execution. Queries strictly filter `WHERE type IN (enabled_categories)`. Data belonging to a disabled category is **never loaded from disk into memory** for timeline queries.
-- **Fail-Closed Security:** If a permission record is missing or falsy, access is denied by default (`403 Forbidden`).
-- **Immutable Audit Trail:** Read, create, delete, and permission change attempts are synchronously written to the `audit_logs` table with status `success` or `blocked`.
-- **Environment Driven Configuration:** Configurable via environment variables with fallback defaults for local development.
+The structure above describes the intended layout. If your actual files differ, update this section to match your repository.
 
----
+## Prerequisites
 
-## 2. Database Schema
+- Python 3.10 or later
+- Node.js and npm
+- Git
 
-The database utilizes 4 distinct relational tables:
+## Setup and Running
 
-1. **`users`**
-   - `id` (INTEGER, Primary Key)
-   - `name` (VARCHAR(100), Not Null)
+### 1. Clone the repository
 
-2. **`permissions`**
-   - `id` (INTEGER, Primary Key)
-   - `user_id` (INTEGER, Foreign Key -> `users.id`)
-   - `event_type` (VARCHAR(30), Not Null)
-   - `enabled` (BOOLEAN, Default True)
-   - *Constraint:* Unique constraint on `(user_id, event_type)`.
-
-3. **`events`**
-   - `id` (INTEGER, Primary Key)
-   - `user_id` (INTEGER, Foreign Key -> `users.id`)
-   - `timestamp` (DATETIME, UTC, Not Null)
-   - `type` (VARCHAR(30), Not Null — `conversation`, `location`, `physiological`, `note`)
-   - `title` (VARCHAR(200), Not Null)
-   - `content` (TEXT, Not Null)
-
-4. **`audit_logs`**
-   - `id` (INTEGER, Primary Key)
-   - `timestamp` (DATETIME, UTC, Default Current Time)
-   - `user_id` (INTEGER, Foreign Key -> `users.id`)
-   - `action` (VARCHAR(50), Not Null — `read_events`, `read_event`, `create_event`, `delete_event`, `update_permission`)
-   - `event_type` (VARCHAR(30), Nullable)
-   - `result` (VARCHAR(30), Not Null — `success`, `blocked`)
-
----
-
-## 3. Quickstart & Setup Guide
-
-### Prerequisites
-- Python 3.10+
-- Node.js 18+ and npm
-
-### A. Backend Setup
-1. Open a terminal in the project root and navigate to `backend`:
-   ```bash
-   cd backend
-   ```
-2. Create and activate a Python virtual environment:
-   ```bash
-   # Windows (PowerShell)
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-
-   # macOS / Linux
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-3. Install backend dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. (Optional) Configure environment variables:
-   Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-5. Start the Flask API server:
-   ```bash
-   python app.py
-   ```
-   *The server starts on `http://127.0.0.1:5000` and automatically initializes SQLite database tables, the seeded demo user (`id=1`), default permissions, and initial demo events.*
-
-### B. Running Automated Tests
-Run pytest from the project root or backend directory:
 ```bash
-# From project root
-pytest backend/tests -v
+git clone https://github.com/bhumika-sharma-19/chronis.git
+cd chronis
 ```
 
-### C. Frontend Setup
-1. In a new terminal, navigate to `frontend`:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-4. Open your browser at `http://localhost:5173`.
+### 2. Set up the backend
 
----
+```bash
+cd backend
+python -m venv venv
+```
 
-## 4. API Documentation
+Activate the virtual environment on Windows:
 
-Base URL: `http://127.0.0.1:5000`
+```bash
+venv\Scripts\activate
+```
 
-A ready-to-import Postman collection is also provided at [`chronis_postman_collection.json`](file:///c:/Users/bhumi/chronis/chronis_postman_collection.json).
+Install dependencies:
 
-### Endpoints Overview
+```bash
+pip install -r requirements.txt
+```
 
-| Method | Endpoint | Description | Query / Body Params | Auth / Privacy Guard |
-| :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/` | API Status & Info | None | None |
-| `GET` | `/permissions` | Get user category permissions | None | User context |
-| `PUT` | `/permissions/<type>` | Toggle permission ON/OFF | Body: `{"enabled": boolean}` | User context, logged to audit |
-| `GET` | `/events` | Get timeline events | `type`, `page`, `per_page` | Omits disabled types; `403` if requested type disabled |
-| `GET` | `/events/<id>` | Get single event by ID | Path: `id` | `403` if event category disabled |
-| `POST` | `/events` | Create new event | Body: `type`, `title`, `content`, `timestamp` (optional) | `403` if category disabled |
-| `DELETE` | `/events/<id>` | Delete event by ID | Path: `id` | `403` if category disabled |
-| `GET` | `/audit-log` | View immutable audit trail | None | Read-only |
+Start the backend:
 
-### Detailed Endpoint Specifications
+```bash
+python app.py
+```
 
-#### 1. `GET /events`
-Fetches paginated memories belonging to currently enabled categories.
-- **Query Parameters:**
-  - `type` *(optional)*: Category filter (`conversation`, `location`, `physiological`, `note`).
-  - `page` *(optional, default: 1)*: Current page number (>= 1).
-  - `per_page` *(optional, default: 10)*: Records per page (1 to 100).
-- **Behavior:**
-  - If `type` is omitted: Returns all events where `type IN (enabled_categories)`.
-  - If `type` is specified and that category is **disabled**: Returns HTTP `403 Forbidden` and logs a `blocked` audit record.
-- **Response `200 OK`:**
-  ```json
-  {
-    "events": [
-      {
-        "id": 1,
-        "user_id": 1,
-        "timestamp": "2026-10-22T08:30:00+00:00",
-        "type": "conversation",
-        "title": "Roadmap planning",
-        "content": "Discussed Q4 privacy requirements."
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "per_page": 10,
-      "total": 1,
-      "total_pages": 1
-    }
-  }
-  ```
+The API should be available at `http://127.0.0.1:5000`.
 
-#### 2. `GET /events/<id>`
-- **Response `200 OK`:** Returns event JSON if found and category is enabled.
-- **Response `403 Forbidden`:** If the event's category has been turned OFF.
-  ```json
-  { "error": "Access denied: this event category is disabled" }
-  ```
-- **Response `404 Not Found`:** If event does not exist.
+The application creates the database tables and demo user when started, according to its current initialization logic.
 
-#### 3. `POST /events`
-- **Request Body:**
-  ```json
-  {
-    "type": "note",
-    "title": "Meeting summary",
-    "content": "Decided on backend authorization design.",
-    "timestamp": "2026-10-22T10:00:00Z"
-  }
-  ```
-- **Response `201 Created`:** Returns created event.
-- **Response `403 Forbidden`:** If user tries to create an event for a category that is currently disabled.
+### 3. Set up the frontend
 
-#### 4. `DELETE /events/<id>`
-- **Response `200 OK`:**
-  ```json
-  { "message": "Event deleted successfully", "id": 1 }
-  ```
-- **Response `403 Forbidden`:** If the event's category is currently turned OFF.
-- **Response `404 Not Found`:** If event does not exist.
+Open a second terminal:
 
-#### 5. `GET /permissions` & `PUT /permissions/<type>`
-- **`GET /permissions`** Returns:
-  ```json
-  {
-    "conversation": true,
-    "location": true,
-    "physiological": true,
-    "note": true
-  }
-  ```
-- **`PUT /permissions/<type>`** Request:
-  ```json
-  { "enabled": false }
-  ```
-  Returns `200 OK` with updated status and records an audit log entry.
+```bash
+cd chronis/frontend
+npm install
+npm run dev
+```
 
-#### 6. `GET /audit-log`
-- Returns chronological list of all data and privacy access attempts (read-only).
-- **Response `200 OK`:**
-  ```json
-  {
-    "audit_logs": [
-      {
-        "id": 1,
-        "timestamp": "2026-10-22T09:15:00+00:00",
-        "user_id": 1,
-        "action": "read_events",
-        "event_type": "location",
-        "result": "blocked"
-      }
-    ],
-    "total": 1
-  }
-  ```
+Open the local URL printed by Vite, usually `http://localhost:5173`.
 
----
+Keep both the backend and frontend running while using the application.
 
-## 5. Short Engineering Note
+## API Documentation
 
-### 1. Where is authorization enforced and why?
-**Authorization is enforced strictly on the backend at the database query layer.**
+The API uses JSON request and response bodies. The current implementation uses a seeded demo user rather than a full authentication system.
 
-*Why:* 
-Enforcing permissions in the frontend is purely cosmetic and vulnerable to trivial bypasses via direct API calls (`curl`, Postman, developer tools). In our architecture, the backend handler inspects the user's active permissions stored in the database. When a timeline request arrives without a category filter, the SQL query explicitly restricts the result set using `Event.type.in_(enabled_categories)`. 
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/` | Check that the API is running |
+| GET | `/events` | Retrieve events, with optional type filtering and pagination |
+| GET | `/events/<id>` | Retrieve a single event |
+| POST | `/events` | Create an event |
+| DELETE | `/events/<id>` | Delete an event |
+| GET | `/permissions` | Retrieve category permission settings |
+| PUT | `/permissions/<event_type>` | Enable or disable a category |
+| GET | `/audit-log` | Read audit records |
 
-If a specific category filter is requested (e.g. `GET /events?type=location`) and that permission is turned `OFF`, the backend intercepts the request, writes a `blocked` entry to `AuditLog`, and immediately responds with `403 Forbidden`. Data from disabled categories is **never retrieved from disk into application memory**, preventing accidental data leaks or in-memory serialization bugs.
+### Event format
+
+An event contains:
+
+- `id`
+- `user_id`
+- `timestamp`
+- `type`
+- `title`
+- `content`
+
+Supported types are `conversation`, `location`, `physiological`, and `note`.
+
+### Create an event
+
+Example request to `POST /events`:
+
+```json
+{
+  "type": "note",
+  "title": "Daily reflection",
+  "content": "Completed my planned tasks."
+}
+```
+
+The event category must be enabled for the request to succeed.
+
+### Filter and paginate events
+
+Example:
+
+```text
+GET /events?type=note&page=1&per_page=10
+```
+
+The type parameter filters events. The page and per-page parameters control pagination.
+
+### Change a permission
+
+Example request to `PUT /permissions/location`:
+
+```json
+{
+  "enabled": false
+}
+```
+
+When a category is disabled, the backend blocks requests for that category. A request specifically targeting a disabled category returns an error response rather than exposing its data.
+
+### Read the audit log
+
+```text
+GET /audit-log
+```
+
+This endpoint returns audit records. The API does not provide an endpoint for editing or deleting audit records.
+
+## Privacy and Authorization
+
+Privacy enforcement takes place in the Flask backend, not only in the frontend.
+
+Before returning or modifying an event, the backend checks the relevant category permission. The events listing also excludes disabled categories. A request specifically targeting a disabled category is rejected.
+
+Permission checks are performed against the database, so changing a permission affects subsequent requests. The frontend toggles provide a way to manage permissions, but they are not the security boundary.
+
+The audit log records actions such as event reads, event creation, permission-related access outcomes, and deletion, including their result where implemented.
+
+## Database Design
+
+Chronis uses SQLite with four main tables:
+
+- **users:** demo user information.
+- **events:** stored memory events.
+- **permissions:** enabled or disabled settings for each user and event category.
+- **audit_logs:** records of important actions and their outcomes.
+
+The application uses a simplified demo-user model to focus on the assignment's permission logic.
+
+## Running Tests
+
+From the `backend` directory, activate the virtual environment and run:
+
+```bash
+pytest -v
+```
+
+The current test suite contains five tests covering:
+
+1. Creating and fetching an event.
+2. Event filtering and pagination.
+3. Blocking access to a disabled category.
+4. Applying permission changes to subsequent requests.
+5. Recording audit entries.
+
+The tests have previously passed with five successful results. Run them again against the final committed code before submission.
+
+## Engineering Note
+
+### 1. Where is authorization enforced, and why?
+
+Authorization is enforced in the Flask backend before event data is returned or modified. Frontend-only restrictions can be bypassed by calling the API directly, so the backend must be responsible for enforcing permissions.
 
 ### 2. What happens when a user requests data they are not allowed to see?
-When a user attempts to read, create, or delete an event belonging to a disabled category:
-1. **Request Interception:** The authorization guard determines the category is disabled (`enabled == False`).
-2. **Audit Logging:** An audit entry is immediately committed to the `audit_logs` table (`action="read_events"`, `event_type="location"`, `result="blocked"`).
-3. **Response Status:** The API returns an HTTP **`403 Forbidden`** with an explicit error message: `{"error": "Access denied: this event category is disabled"}`.
-4. **Timeline Filtering Invariant:** In the general timeline view (`GET /events`), no error is thrown; rather, disabled categories are filtered out of the SQL query so that only authorized memories are returned.
 
-*(Note on 403 vs 404: For individual event lookups `GET /events/<id>`, returning `404` could be chosen to prevent leaking whether an ID exists. However, we return `403` to provide transparent feedback to the authenticated user that the record exists under their ownership but cannot be accessed until the privacy permission is re-enabled).*
+If the requested category is disabled, the backend rejects the request with an error response and records the blocked action where audit logging is implemented. Disabled categories are not returned in the general events listing.
 
-### 3. What is one weakness that still exists in your implementation?
-**The lack of granular cryptographic encryption at rest per category.**
+### 3. What is one weakness that still exists?
 
-While the relational database enforces access control logically via SQL filters, the underlying data records in `events` remain in plaintext SQLite storage. If the database file is accessed directly (e.g. via direct disk inspection, compromised backup, or privileged database administrator query), the disabled categories could be read. 
+The application uses a seeded demo user instead of real authentication and user-specific identity verification. It is intended as a prototype, not a production-ready multi-user privacy system.
 
-*Mitigation:* In a production system, each category should be encrypted with a dedicated per-user/per-category key derived via KMS or user password, such that turning a category OFF temporarily zeroes or locks the decryption key in memory.
+### 4. How would the system change if it grew to one million events per user?
 
-### 4. How would you change the system if it grew to 1 million events per user?
-At 1 million events per user, SQLite and straightforward offset pagination will encounter performance bottlenecks. The following architectural evolutions would be made:
-1. **Database Migration to PostgreSQL with Partitioning:** Migrate to PostgreSQL and partition the `events` table by `(user_id, timestamp)` or `(user_id, type)`.
-2. **Compound Indexing:** Add a compound index on `(user_id, type, timestamp DESC)`. This allows index-only scans when filtering by enabled categories.
-3. **Keyset / Cursor-Based Pagination:** Replace offset pagination (`OFFSET n`) with cursor-based pagination (`WHERE (timestamp, id) < (cursor_timestamp, cursor_id) LIMIT 20`). `OFFSET 500,000` requires scanning and discarding half a million rows, whereas keyset pagination executes in constant `O(log N)` time.
-4. **Caching Permission Bitmaps:** Cache each user's enabled category permissions in an in-memory cache (Redis) with cache invalidation on `PUT /permissions`. This avoids an extra relational query to `permissions` on every timeline request.
-5. **Cold Storage Tiering:** Move events older than 6–12 months into partitioned cold storage / Parquet archives with on-demand retrieval.
+I would review query patterns, add suitable database indexes, and use efficient pagination—such as cursor-based pagination for large timelines. I would also evaluate a production database such as PostgreSQL, load-test the API, and ensure that permission checks remain enforced consistently.
 
 ### 5. What would you improve with one additional day?
-With one additional day, I would implement:
-1. **Comprehensive JWT Authentication & Multi-Tenancy:** Move beyond the demo user to full multi-tenant auth with OAuth2 / JWT bearer tokens, ensuring users can only manage their own timeline.
-2. **Date Range Filtering (`start_date`, `end_date`) and Full-Text Search:** Implement date range bounds and SQLite FTS5 / PostgreSQL Trigram full-text search across titles and contents.
-3. **Bulk Permission Toggles & Granular Policies:** Allow time-bound access (e.g., "Mute location tracking for the next 2 hours") and export/redaction tools (GDPR "Right to be Forgotten" export package).
-4. **Interactive OpenAPI / Swagger UI:** Mount Swagger UI directly into Flask at `/docs` using Flasgger or FastAPI.
 
----
+I would expand edge-case and integration tests, improve configuration and error handling, verify the audit trail for every relevant privacy-sensitive action, and add clearer API documentation. I would also perform a final end-to-end review of the frontend and backend together.
 
-## 6. Automated Testing Verification
+## Assumptions and Limitations
 
-The test suite covers all requirements outlined in the specification:
-
-```bash
-pytest backend/tests -v
-```
-
-| Test Function | What It Verifies | Status |
-| :--- | :--- | :---: |
-| `test_create_and_fetch_event` | Creates event and retrieves it via `GET /events/{id}` | ✅ Passed |
-| `test_filter_and_pagination` | Validates category filtering, page limits, total counts, and page slicing | ✅ Passed |
-| `test_enabled_and_disabled_category_in_timeline` | Ensures disabled categories are omitted from bulk timeline queries | ✅ Passed |
-| `test_get_single_event_blocked_when_disabled` | Proves single event fetch returns `403` when disabled and `200` when enabled | ✅ Passed |
-| `test_permission_change_cycle_affects_later_requests` | Dynamic permissions immediately govern subsequent read/write requests | ✅ Passed |
-| `test_delete_event_with_privacy_control` | Event deletion works when enabled, blocks when disabled, returns 404 for missing | ✅ Passed |
-| `test_audit_log_records_important_actions` | Validates audit records for creations, reads, deletes, updates, and immutability | ✅ Passed |
-| `test_validation_and_bad_requests` | Validates 400 bad request handling on invalid types, missing fields, bad pagination | ✅ Passed |
-
----
-
-## 7. Demo Video Walkthrough Guide (3–5 Minutes)
-
-When recording your demo video, follow this sequence:
-
-1. **Overview (30s):**
-   - Introduce Chronis: personal memory timeline with category permissions and audit logging.
-   - Point out the active categories: `conversation`, `location`, `physiological`, `note`.
-2. **Timeline Demonstration (45s):**
-   - Show the timeline displaying memories. Demonstrate category filter buttons (`All`, `Location`, `Notes`).
-   - Show pagination controls navigating through pages.
-3. **Demonstrating Privacy Enforcement (1m 15s):**
-   - Locate the **Privacy Controls** panel.
-   - Toggle **Location** to **OFF**.
-   - Show that Location events immediately disappear from the timeline.
-   - Switch the filter button to "Location" to show that the backend returns `403 Access Denied`.
-   - Use `curl` or Postman to query `GET http://127.0.0.1:5000/events?type=location` directly in terminal to prove the **API blocks the data, not just the frontend**.
-4. **Audit Log Inspection (45s):**
-   - Scroll down to the **Audit Log** section.
-   - Show that toggling the permission generated an `update_permission` record.
-   - Show that attempting to access location data generated a `blocked` record for `read_events`.
-5. **Run the Tests (30s):**
-   - Run `pytest backend/tests -v` in the terminal and show that all 8 automated tests pass.
+- A seeded demo user is used instead of full authentication.
+- The prototype uses SQLite for straightforward local setup.
+- Permissions are defined per event category.
+- Date-range filtering, production deployment, authentication, and advanced analytics are outside the current scope.
+- This project is a technical assignment prototype and is not intended to be a production-ready security system.

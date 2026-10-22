@@ -1,11 +1,14 @@
+
 import { useEffect, useState } from "react";
 import { getAuditLog } from "../api";
 
-export default function AuditLog({ refreshKey = 0 }) {
+export default function AuditLog() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+
+useEffect(() => {
   async function loadAuditLog() {
     try {
       setLoading(true);
@@ -13,40 +16,35 @@ export default function AuditLog({ refreshKey = 0 }) {
 
       const data = await getAuditLog();
       setLogs(
-        Array.isArray(data) ? data : data.audit_logs ?? data.logs ?? []
+        Array.isArray(data)
+          ? data
+          : data.audit_logs ?? data.logs ?? []
       );
     } catch (err) {
-      setError(err.message || "Failed to load audit logs");
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    loadAuditLog();
-  }, [refreshKey]);
+  loadAuditLog();
+
+  const intervalId = setInterval(loadAuditLog, 5000);
+
+  return () => clearInterval(intervalId);
+}, []);
+
 
   return (
     <section className="audit-section">
-      <div className="section-heading audit-header-row">
+      <div className="section-heading">
         <div>
           <h2>Audit Log</h2>
-          <p>
-            Immutable, read-only record of all memory and privacy actions.
-          </p>
+          <p>Track privacy and memory access activity.</p>
         </div>
-
-        <button
-          className="refresh-log-button"
-          onClick={loadAuditLog}
-          disabled={loading}
-          type="button"
-        >
-          {loading ? "Refreshing…" : "↻ Refresh Log"}
-        </button>
       </div>
 
-      {loading && <p>Loading audit records…</p>}
+      {loading && <p>Loading audit records...</p>}
 
       {error && <p className="error-message">{error}</p>}
 
@@ -68,8 +66,13 @@ export default function AuditLog({ refreshKey = 0 }) {
                 </span>
               </div>
 
-              <p>Category: {log.event_type || "All / None"}</p>
-              <p>User ID: {log.user_id}</p>
+              <p>
+                Category: {log.event_type || "N/A"}
+              </p>
+
+              <p>
+                User ID: {log.user_id}
+              </p>
 
               <small>
                 {log.timestamp

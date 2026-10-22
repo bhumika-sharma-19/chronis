@@ -1,19 +1,11 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5000";
 
-export async function getEvents(type = "all", page = 1, perPage = 10) {
+const API_BASE_URL = "http://127.0.0.1:5000";
+
+export async function getEvents(type = "all") {
   const params = new URLSearchParams();
 
   if (type !== "all") {
     params.set("type", type);
-  }
-
-  if (page) {
-    params.set("page", String(page));
-  }
-
-  if (perPage) {
-    params.set("per_page", String(perPage));
   }
 
   const query = params.toString();
@@ -47,22 +39,9 @@ export async function createEvent(eventData) {
   return data;
 }
 
-export async function deleteEvent(eventId) {
-  const response = await fetch(`${API_BASE_URL}/events/${eventId}`, {
-    method: "DELETE",
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || "Failed to delete event");
-  }
-
-  return data;
-}
-
 export async function getPermissions() {
   const response = await fetch(`${API_BASE_URL}/permissions`);
+
   const data = await response.json();
 
   if (!response.ok) {
@@ -73,13 +52,16 @@ export async function getPermissions() {
 }
 
 export async function updatePermission(type, enabled) {
-  const response = await fetch(`${API_BASE_URL}/permissions/${type}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ enabled }),
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/permissions/${type}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ enabled }),
+    }
+  );
 
   const data = await response.json();
 
@@ -90,9 +72,13 @@ export async function updatePermission(type, enabled) {
   return data;
 }
 
+
 export async function getAuditLog() {
   const response = await fetch(`${API_BASE_URL}/audit-log`);
   const data = await response.json();
+
+  console.log("Audit API status:", response.status);
+  console.log("Audit API data:", data);
 
   if (!response.ok) {
     throw new Error(data.error || "Failed to load audit log");
@@ -100,3 +86,4 @@ export async function getAuditLog() {
 
   return data;
 }
+

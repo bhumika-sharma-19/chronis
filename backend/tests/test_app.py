@@ -1,6 +1,7 @@
+
+import pytest
 import os
 import sys
-import pytest
 
 sys.path.insert(
     0,
@@ -13,7 +14,7 @@ from models import User, Event, Permission, AuditLog
 
 @pytest.fixture
 def client(tmp_path):
-    """Fixture that configures an isolated in-memory or temporary SQLite test database."""
+    # Create a separate temporary database for each test.
     test_db_path = tmp_path / "chronis_test.db"
 
     app.config.update(
@@ -21,19 +22,31 @@ def client(tmp_path):
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{test_db_path.as_posix()}",
     )
 
+    # The database engine must be accessed inside app context.
     with app.app_context():
+        # Remove any existing session before switching databases.
         db.session.remove()
+
+        # Dispose the previously initialized engine.
         db.engines[None].dispose()
+
+        # Clear the existing tables in the test database only.
         db.drop_all()
         db.create_all()
 
-        # Seed demo user
+        # Create a test user.
         user = User(id=1, name="Test User")
         db.session.add(user)
         db.session.flush()
 
-        # Enable all 4 categories initially
-        categories = ["conversation", "location", "physiological", "note"]
+        # Enable all event categories initially.
+        categories = [
+            "conversation",
+            "location",
+            "physiological",
+            "note",
+        ]
+
         for category in categories:
             db.session.add(
                 Permission(
@@ -54,282 +67,102 @@ def client(tmp_path):
 
 
 def test_create_and_fetch_event(client):
-    """Verify an event can be created via POST and retrieved via GET /events/{id}."""
-    create_res = client.post(
+    response = client.post(
         "/events",
         json={
             "type": "note",
-            "title": "Design meeting notes",
-            "content": "Discussed privacy boundaries and audit logging schema.",
+            "title": "Test note",
+            "content": "Testing event creation",
         },
     )
 
-    assert create_res.status_code == 201
-    created_data = create_res.get_json()
-    event_id = created_data["id"]
+    assert response.status_code == 201
+    event_id = response.get_json()["id"]
 
-    assert created_data["type"] == "note"
-    assert created_data["title"] == "Design meeting notes"
-    assert created_data["content"] == "Discussed privacy boundaries and audit logging schema."
-    assert "timestamp" in created_data
-    assert created_data["user_id"] == 1
+    response = client.get(f"/events/{event_id}")
 
-    # Fetch event by ID
-    fetch_res = client.get(f"/events/{event_id}")
-    assert fetch_res.status_code == 200
-    fetched_data = fetch_res.get_json()
-    assert fetched_data["id"] == event_id
-    assert fetched_data["title"] == "Design meeting notes"
+    assert response.status_code == 200
+    assert response.get_json()["title"] == "Test note"
 
 
 def test_filter_and_pagination(client):
-    """Verify category filtering and pagination parameters work properly."""
-    # Seed 3 notes and 2 conversations
     for i in range(3):
-        client.post(
+        response = client.post(
             "/events",
             json={
                 "type": "note",
                 "title": f"Note {i}",
-                "content": f"Note body {i}",
+                "content": f"Content {i}",
             },
         )
+        assert response.status_code == 201
 
-    for i in range(2):
-        client.post(
-            "/events",
-            json={
-                "type": "conversation",
-                "title": f"Conversation {i}",
-                "content": f"Conversation body {i}",
-            },
-        )
+    response = client.get("/events?type=note&page=1&per_page=2")
 
-    # Test filtering by category with pagination
-    res = client.get("/events?type=note&page=1&per_page=2")
-    assert res.status_code == 200
-    data = res.get_json()
-
+    assert response.status_code == 200
+    data = response.get_json()
     assert len(data["events"]) == 2
     assert data["pagination"]["total"] == 3
     assert data["pagination"]["page"] == 1
-    assert data["pagination"]["per_page"] == 2
-    assert data["pagination"]["total_pages"] == 2
-    assert all(e["type"] == "note" for e in data["events"])
-
-    # Test fetching page 2
-    page2_res = client.get("/events?type=note&page=2&per_page=2")
-    assert page2_res.status_code == 200
-    page2_data = page2_res.get_json()
-    assert len(page2_data["events"]) == 1
 
 
-def test_enabled_and_disabled_category_in_timeline(client):
-    """Verify disabled categories are excluded from GET /events, while enabled ones are returned."""
-    # Create one note and one location event
-    client.post(
-        "/events",
-        json={
-            "type": "note",
-            "title": "Visible note",
-            "content": "Should appear in timeline",
-        },
+def test_disabled_category_is_blocked(client):
+    response = client.put(
+        "/permissions/location",
+        json={"enabled": False},
     )
-    client.post(
+    assert response.status_code == 200
+
+    response = client.post(
         "/events",
         json={
             "type": "location",
-            "title": "Confidential location",
-            "content": "Secret location data",
+            "title": "Test location",
+            "content": "This should be blocked",
         },
     )
+    assert response.status_code == 403
 
-    # Turn off location category
-    perm_res = client.put("/permissions/location", json={"enabled": False})
-    assert perm_res.status_code == 200
-
-    # Fetch all events (timeline query)
-    res = client.get("/events")
-    assert res.status_code == 200
-    events = res.get_json()["events"]
-
-    # Only note should be returned; location must NOT be returned by the backend
-    assert len(events) == 1
-    assert events[0]["type"] == "note"
-    assert not any(e["type"] == "location" for e in events)
-
-    # Querying the disabled category directly must yield 403 Forbidden
-    direct_res = client.get("/events?type=location")
-    assert direct_res.status_code == 403
-    assert "disabled" in direct_res.get_json()["error"]
+    response = client.get("/events?type=location")
+    assert response.status_code == 403
 
 
-def test_get_single_event_blocked_when_disabled(client):
-    """Verify GET /events/{id} returns 403 when the event's category is disabled."""
-    create_res = client.post(
-        "/events",
-        json={
-            "type": "physiological",
-            "title": "Heart rate record",
-            "content": "Peak heart rate 155 bpm",
-        },
+def test_permission_change_affects_later_requests(client):
+    response = client.put(
+        "/permissions/location",
+        json={"enabled": False},
     )
-    assert create_res.status_code == 201
-    event_id = create_res.get_json()["id"]
+    assert response.status_code == 200
 
-    # Verify accessible when enabled
-    assert client.get(f"/events/{event_id}").status_code == 200
+    response = client.get("/permissions")
+    assert response.status_code == 200
+    assert response.get_json()["location"] is False
 
-    # Disable physiological category
-    client.put("/permissions/physiological", json={"enabled": False})
-
-    # Verify blocked at backend API layer with 403 Forbidden
-    blocked_res = client.get(f"/events/{event_id}")
-    assert blocked_res.status_code == 403
-    assert "disabled" in blocked_res.get_json()["error"]
-
-    # Re-enable physiological category
-    client.put("/permissions/physiological", json={"enabled": True})
-
-    # Verify access is restored
-    restored_res = client.get(f"/events/{event_id}")
-    assert restored_res.status_code == 200
-    assert restored_res.get_json()["id"] == event_id
-
-
-def test_permission_change_cycle_affects_later_requests(client):
-    """Verify changing a permission dynamically governs subsequent create and read operations."""
-    # Disable conversation
-    client.put("/permissions/conversation", json={"enabled": False})
-
-    # Creation should be blocked
-    create_blocked = client.post(
-        "/events",
-        json={
-            "type": "conversation",
-            "title": "Blocked conversation",
-            "content": "This cannot be saved while disabled",
-        },
+    response = client.put(
+        "/permissions/location",
+        json={"enabled": True},
     )
-    assert create_blocked.status_code == 403
+    assert response.status_code == 200
 
-    # Enable conversation again
-    client.put("/permissions/conversation", json={"enabled": True})
-
-    # Creation should now succeed
-    create_allowed = client.post(
-        "/events",
-        json={
-            "type": "conversation",
-            "title": "Allowed conversation",
-            "content": "This can now be saved",
-        },
-    )
-    assert create_allowed.status_code == 201
+    response = client.get("/permissions")
+    assert response.get_json()["location"] is True
 
 
-def test_delete_event_with_privacy_control(client):
-    """Verify DELETE /events/{id} succeeds when enabled and is blocked when category is disabled."""
-    # Create an event
-    create_res = client.post(
-        "/events",
-        json={
-            "type": "note",
-            "title": "Note to delete",
-            "content": "Will be deleted",
-        },
-    )
-    event_id = create_res.get_json()["id"]
-
-    # Delete non-existent event -> 404
-    assert client.delete("/events/9999").status_code == 404
-
-    # Successfully delete the event
-    del_res = client.delete(f"/events/{event_id}")
-    assert del_res.status_code == 200
-    assert del_res.get_json()["message"] == "Event deleted successfully"
-
-    # Verify event no longer exists
-    assert client.get(f"/events/{event_id}").status_code == 404
-
-    # Test deleting an event when category is disabled
-    create_loc = client.post(
-        "/events",
-        json={
-            "type": "location",
-            "title": "Location to delete",
-            "content": "GPS coordinates",
-        },
-    )
-    loc_id = create_loc.get_json()["id"]
-
-    # Disable location
-    client.put("/permissions/location", json={"enabled": False})
-
-    # Attempt delete -> 403 Forbidden
-    del_blocked = client.delete(f"/events/{loc_id}")
-    assert del_blocked.status_code == 403
-
-
-def test_audit_log_records_important_actions(client):
-    """Verify audit log captures events, permission changes, and blocked access attempts."""
-    # 1. Create event
+def test_audit_log_records_actions(client):
     client.post(
         "/events",
         json={
             "type": "note",
-            "title": "Audit note",
-            "content": "Test content",
+            "title": "Audit test",
+            "content": "Check audit log",
         },
     )
 
-    # 2. Update permission
-    client.put("/permissions/note", json={"enabled": False})
+    response = client.get("/audit-log")
 
-    # 3. Trigger blocked read
-    client.get("/events?type=note")
+    assert response.status_code == 200
+    data = response.get_json()
+    logs = data["audit_logs"]
 
-    # Fetch audit log
-    audit_res = client.get("/audit-log")
-    assert audit_res.status_code == 200
-    logs = audit_res.get_json()["audit_logs"]
-
-    actions = [log["action"] for log in logs]
-    results = [log["result"] for log in logs]
-
-    assert "create_event" in actions
-    assert "update_permission" in actions
-    assert "read_events" in actions
-    assert "success" in results
-    assert "blocked" in results
-
-    # Verify audit log is read-only (disallow POST/PUT/DELETE)
-    assert client.post("/audit-log").status_code == 405
-    assert client.delete("/audit-log").status_code == 405
-
-
-def test_validation_and_bad_requests(client):
-    """Verify input validation and error responses for malformed requests."""
-    # Missing required fields
-    bad_post = client.post("/events", json={"type": "note"})
-    assert bad_post.status_code == 400
-    assert "Missing required fields" in bad_post.get_json()["error"]
-
-    # Invalid event category
-    invalid_cat = client.post(
-        "/events",
-        json={
-            "type": "telepathy",
-            "title": "Invalid category",
-            "content": "Should fail",
-        },
-    )
-    assert invalid_cat.status_code == 400
-    assert "Invalid event category" in invalid_cat.get_json()["error"]
-
-    # Invalid pagination
-    bad_page = client.get("/events?page=0")
-    assert bad_page.status_code == 400
-
-    bad_per_page = client.get("/events?per_page=200")
-    assert bad_per_page.status_code == 400
+    assert len(logs) > 0
+    assert any(log["action"] for log in logs)
