@@ -1,16 +1,23 @@
+import os
 from datetime import datetime, timezone
+from dotenv import load_dotenv
 from flask_cors import CORS
 from flask import Flask, request
 from models import db, User, Event, Permission, AuditLog
 
+load_dotenv()
+
 app = Flask(__name__)
 CORS(app)
-# Configure the SQLite database
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///chronis.db"
+# Configure database with environment variable and SQLite fallback
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
+    "DATABASE_URL", "sqlite:///chronis.db"
+)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Connect SQLAlchemy to Flask
 db.init_app(app)
+
 
 
 # Home route
@@ -60,6 +67,16 @@ def update_permission(event_type):
         return {"error": "enabled must be true or false"}, 400
 
     permission.enabled = data["enabled"]
+
+    # Record the permission change in the audit log
+    audit_entry = AuditLog(
+        user_id=permission.user_id,
+        action="update_permission",
+        event_type=event_type,
+        result="success",
+        timestamp=datetime.now(timezone.utc),
+    )
+    db.session.add(audit_entry)
     db.session.commit()
 
     return {
@@ -427,5 +444,10 @@ if __name__ == "__main__":
                 db.session.add(permission)
 
         db.session.commit()
-
-    app.run(debug=True)
+    debug_mode = os.getenv("FLASK_DEBUG", "False").strip().lower() in (
+        "true",
+        "1",
+        "t",
+    )
+    port = int(os.getenv("PORT", 5000))
+    app.run(debug=debug_mode, port=port)

@@ -1,141 +1,228 @@
-
 import { useEffect, useState } from "react";
-import { getEvents } from "../api";
+import { getEvents, deleteEvent } from "../api";
 
-const categories = [
-  "all",
-  "conversation",
-  "location",
-  "physiological",
-  "note",
+const CATEGORIES = [
+  { id: "all", label: "All" },
+  { id: "conversation", label: "Conversation" },
+  { id: "location", label: "Location" },
+  { id: "physiological", label: "Physiological" },
+  { id: "note", label: "Note" },
 ];
 
 function formatDate(timestamp) {
-  return new Date(timestamp).toLocaleString([], {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  try {
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return timestamp;
+    return d.toLocaleString([], {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return timestamp;
+  }
 }
 
-export default function MemoryTimeline() {
+export default function MemoryTimeline({
+  refreshKey = 0,
+  onEventDeleted,
+  onTotalEventsChange,
+  permissions = {},
+}) {
   const [selectedType, setSelectedType] = useState("all");
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [page, setPage] = useState(1);
   const [events, setEvents] = useState([]);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    per_page: 8,
+    total: 0,
+    total_pages: 0,
+  });
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
+  const perPage = 8;
 
-    async function loadEvents() {
-      setLoading(true);
-      setError("");
+  function handleFilterClick(category) {
+    setSelectedType(category);
+    setPage(1);
+    setNotice("");
+  }
 
-      try {
-        const data = await getEvents(selectedType);
-
-        if (!cancelled) {
-          setEvents(data.events ?? []);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setEvents([]);
-          setError(err.message || "Unable to load memories.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
+  async function handleDelete(eventId, title) {
+    if (!window.confirm(`Delete "${title || "this memory"}"?`)) {
+      return;
     }
 
-    loadEvents();
+    setDeletingId(eventId);
+    setError("");
+    setNotice("");
 
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedType, refreshKey]);
+    try {
+      await deleteEvent(eventId);
+      setNotice("Event deleted successfully.");
+      onEventDeleted?.();
+
+      if (events.length === 1 && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        loadEvents();
+      }
+    } catch (err) {
+      setError(err.message || "Failed to delete event.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function loadEvents() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await getEvents(selectedType, page, perPage);
+      const list = data.events ?? [];
+      const pag = data.pagination ?? {
+        page: 1,
+        per_page: perPage,
+        total: list.length,
+        total_pages: 1,
+      };
+
+      setEvents(list);
+      setPagination(pag);
+
+      if (selectedType === "all") {
+        onTotalEventsChange?.(pag.total);
+      }
+    } catch (err) {
+      setEvents([]);
+      setError(err.message || "Unable to load memories.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadEvents();
+  }, [selectedType, page, refreshKey]);
+
+  const isSelectedDisabled =
+    selectedType !== "all" && permissions[selectedType] === false;
 
   return (
-    <section className="timeline-panel">
-      <div className="timeline-heading">
+    <section className="section-card">
+      <div className="section-header-row">
         <div>
-          <p className="eyebrow">YOUR MEMORY SPACE</p>
-          <h2>Memory Timeline</h2>
+          <h2 className="section-heading">Memory Timeline</h2>
           <p className="section-description">
-            Explore your saved memories in one place.
+            Chronological log of stored memories.
           </p>
         </div>
 
-        <span className="event-count">
-          {loading ? "Loading…" : `${events.length} events`}
+        <span className="event-count-badge">
+          {pagination.total} {pagination.total === 1 ? "event" : "events"}
         </span>
       </div>
 
-      <div className="timeline-filters">
-        {categories.map((category) => (
-          <button
-            key={category}
-            className={
-              selectedType === category
-                ? "filter-button active"
-                : "filter-button"
-            }
-            onClick={() => setSelectedType(category)}
-          >
-            {category === "all"
-              ? "All memories"
-              : category.charAt(0).toUpperCase() +
-              category.slice(1)}
-          </button>
-        ))}
+      {/* Filter Tabs */}
+      <div className="filter-group">
+        {CATEGORIES.map((cat) => {
+          const isActive = selectedType === cat.id;
+          const isDisabled = cat.id !== "all" && permissions[cat.id] === false;
+
+          return (
+            <button
+              key={cat.id}
+              type="button"
+              className={`filter-btn ${isActive ? "active" : ""} ${isDisabled ? "filter-disabled" : ""}`}
+              onClick={() => handleFilterClick(cat.id)}
+            >
+              {cat.label}
+              {isDisabled && <span className="disabled-indicator" title="Category disabled" />}
+            </button>
+          );
+        })}
       </div>
 
-      <div className="timeline-list">
+      {notice && <div className="banner banner-success">{notice}</div>}
+      {isSelectedDisabled && (
+        <div className="banner banner-warning">
+          <strong>Notice:</strong> The <em>{selectedType}</em> category is turned off. Direct queries are rejected by the backend.
+        </div>
+      )}
+
+      {/* Events List */}
+      <div className="timeline-content">
         {loading ? (
-          <div className="empty-state">
-            <h3>Loading memories…</h3>
-            <p>Fetching events from Chronis.</p>
-          </div>
+          <div className="state-message">Loading memories…</div>
         ) : error ? (
-          <div className="empty-state">
-            <h3>Could not load memories</h3>
+          <div className="state-message error">
             <p>{error}</p>
-            <button
-              className="filter-button"
-              onClick={() => setRefreshKey((key) => key + 1)}
-            >
+            <button className="btn btn-secondary" onClick={loadEvents} type="button">
               Try again
             </button>
           </div>
         ) : events.length === 0 ? (
-          <div className="empty-state">
-            <span className="empty-icon">◇</span>
-            <h3>No memories found</h3>
-            <p>
-              No saved events are available in this category yet.
-            </p>
+          <div className="state-message">
+            <p>No memories available in this view.</p>
           </div>
         ) : (
-          events.map((event) => (
-            <article className="memory-card" key={event.id}>
-              <div className="timeline-marker" />
+          <div className="event-list">
+            {events.map((event) => (
+              <article className="event-card" key={event.id}>
+                <div className="event-header">
+                  <div className="event-meta">
+                    <span className="event-category-tag">{event.type}</span>
+                    <time className="event-timestamp">{formatDate(event.timestamp)}</time>
+                  </div>
 
-              <div className="memory-content">
-                <div className="memory-meta">
-                  <span className={`category-tag ${event.type}`}>
-                    {event.type}
-                  </span>
-                  <time>{formatDate(event.timestamp)}</time>
+                  <button
+                    type="button"
+                    className="btn-link-delete"
+                    disabled={deletingId === event.id}
+                    onClick={() => handleDelete(event.id, event.title)}
+                  >
+                    {deletingId === event.id ? "Deleting…" : "Delete"}
+                  </button>
                 </div>
 
-                <h3>{event.title}</h3>
-                <p>{event.content}</p>
-              </div>
-            </article>
-          ))
+                <h3 className="event-title">{event.title}</h3>
+                <p className="event-body">{event.content}</p>
+              </article>
+            ))}
+          </div>
         )}
       </div>
+
+      {/* Pagination */}
+      {pagination.total_pages > 1 && (
+        <div className="pagination">
+          <span className="pagination-info">
+            Page {pagination.page} of {pagination.total_pages}
+          </span>
+
+          <div className="pagination-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={page >= pagination.total_pages || loading}
+              onClick={() => setPage((p) => Math.min(pagination.total_pages, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

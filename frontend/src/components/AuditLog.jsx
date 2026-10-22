@@ -1,19 +1,31 @@
-
 import { useEffect, useState } from "react";
 import { getAuditLog } from "../api";
 
-export default function AuditLog() {
+function formatTimestamp(isoString) {
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return d.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return isoString;
+  }
+}
+
+export default function AuditLog({ refreshKey = 0 }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-
-useEffect(() => {
   async function loadAuditLog() {
     try {
       setLoading(true);
       setError("");
-
       const data = await getAuditLog();
       setLogs(
         Array.isArray(data)
@@ -21,68 +33,85 @@ useEffect(() => {
           : data.audit_logs ?? data.logs ?? []
       );
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to load audit trail.");
     } finally {
       setLoading(false);
     }
   }
 
-  loadAuditLog();
-
-  const intervalId = setInterval(loadAuditLog, 5000);
-
-  return () => clearInterval(intervalId);
-}, []);
-
+  useEffect(() => {
+    loadAuditLog();
+  }, [refreshKey]);
 
   return (
-    <section className="audit-section">
-      <div className="section-heading">
+    <section className="section-card">
+      <div className="section-header-row">
         <div>
-          <h2>Audit Log</h2>
-          <p>Track privacy and memory access activity.</p>
+          <h2 className="section-heading">Audit Log</h2>
+          <p className="section-description">
+            Read-only ledger of data access, permission updates, and authorization outcomes.
+          </p>
         </div>
+
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={loadAuditLog}
+          disabled={loading}
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
 
-      {loading && <p>Loading audit records...</p>}
+      {error && <div className="banner banner-error">{error}</div>}
 
-      {error && <p className="error-message">{error}</p>}
-
-      {!loading && !error && logs.length === 0 && (
-        <p>No audit records found.</p>
-      )}
-
-      {!loading && !error && logs.length > 0 && (
-        <div className="audit-list">
-          {logs.map((log, index) => (
-            <article
-              className="audit-item"
-              key={log.id ?? `${log.timestamp}-${index}`}
-            >
-              <div className="audit-item-header">
-                <strong>{log.action}</strong>
-                <span className={`audit-status ${log.result}`}>
-                  {log.result}
-                </span>
-              </div>
-
-              <p>
-                Category: {log.event_type || "N/A"}
-              </p>
-
-              <p>
-                User ID: {log.user_id}
-              </p>
-
-              <small>
-                {log.timestamp
-                  ? new Date(log.timestamp).toLocaleString()
-                  : "Time unavailable"}
-              </small>
-            </article>
-          ))}
-        </div>
-      )}
+      <div className="table-wrapper">
+        {loading && logs.length === 0 ? (
+          <div className="state-message">Loading audit records…</div>
+        ) : logs.length === 0 ? (
+          <div className="state-message">No audit activity recorded yet.</div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Result</th>
+                <th>Action</th>
+                <th>Category</th>
+                <th>User ID</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log, index) => {
+                const isSuccess = log.result === "success";
+                return (
+                  <tr key={log.id ?? index}>
+                    <td>
+                      <span className={`result-tag ${isSuccess ? "result-success" : "result-blocked"}`}>
+                        {log.result}
+                      </span>
+                    </td>
+                    <td>
+                      <code className="code-snippet">{log.action}</code>
+                    </td>
+                    <td>
+                      <span className="category-text">
+                        {log.event_type || "N/A"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="user-id-text">User {log.user_id}</span>
+                    </td>
+                    <td className="timestamp-text">
+                      {formatTimestamp(log.timestamp)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </section>
   );
 }

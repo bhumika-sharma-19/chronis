@@ -87,6 +87,16 @@ The API should be available at `http://127.0.0.1:5000`.
 
 The application creates the database tables and demo user when started, according to its current initialization logic.
 
+#### Configuration (Environment Variables)
+
+Configuration is managed using environment variables (with default local fallbacks):
+
+- `DATABASE_URL`: Connection string for the database (defaults to `sqlite:///chronis.db`).
+- `FLASK_DEBUG`: Controls Flask debug mode (defaults to `false`).
+- `PORT`: Server port (defaults to `5000`).
+
+To customize variables locally, copy `backend/.env.example` to `backend/.env` and adjust the values as needed.
+
 ### 3. Set up the frontend
 
 Open a second terminal:
@@ -202,15 +212,14 @@ From the `backend` directory, activate the virtual environment and run:
 pytest -v
 ```
 
-The current test suite contains five tests covering:
+The test suite contains automated tests covering:
 
-1. Creating and fetching an event.
-2. Event filtering and pagination.
-3. Blocking access to a disabled category.
-4. Applying permission changes to subsequent requests.
-5. Recording audit entries.
-
-The tests have previously passed with five successful results. Run them again against the final committed code before submission.
+1. Creating and fetching an event (`test_create_and_fetch_event`).
+2. Event filtering and pagination (`test_filter_and_pagination`).
+3. Blocking access to a disabled category (`test_disabled_category_is_blocked`).
+4. Applying permission changes to subsequent requests (`test_permission_change_affects_later_requests`).
+5. Recording audit entries for data access and permission updates (`test_audit_log_records_actions`).
+6. Full privacy enforcement lifecycle (`test_privacy_enforcement_location_lifecycle`): enabling permissions, creating events, disabling permissions, verifying exclusion from general timeline queries, blocking direct access, and verifying that permission changes affect subsequent requests.
 
 ## Engineering Note
 

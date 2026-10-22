@@ -1,147 +1,102 @@
+import { useState } from "react";
+import { updatePermission } from "../api";
 
-import { useEffect, useState } from "react";
-import { getPermissions, updatePermission } from "../api";
-
-const categories = [
+const CATEGORIES = [
   {
     type: "conversation",
-    title: "Conversations",
-    description: "Saved conversation memories",
+    title: "Conversation",
+    description: "Speech transcripts, chat records, and dialogue logs.",
   },
   {
     type: "location",
     title: "Location",
-    description: "Saved location records",
+    description: "Geographic locations, check-ins, and travel records.",
   },
   {
     type: "physiological",
     title: "Physiological",
-    description: "Physiological memory records",
+    description: "Biometric readings, heart rate metrics, and workout logs.",
   },
   {
     type: "note",
-    title: "Notes",
-    description: "Personal notes and reminders",
+    title: "Note",
+    description: "Personal thoughts, written notes, and quick reflections.",
   },
 ];
 
-export default function PrivacyControls({ onChanged }) {
-  const [permissions, setPermissions] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+export default function PrivacyControls({ permissions = {}, onPermissionChange }) {
+  const [updatingType, setUpdatingType] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  useEffect(() => {
-    async function loadPermissions() {
-      try {
-        const data = await getPermissions();
-        setPermissions(data);
-      } catch (err) {
-        setError(err.message || "Could not load privacy settings.");
-      } finally {
-        setLoading(false);
-      }
-    }
+  async function handleToggle(type, currentEnabled) {
+    const nextState = !currentEnabled;
+    setUpdatingType(type);
+    setErrorMessage("");
 
-    loadPermissions();
-  }, []);
-
-  async function handleToggle(type, enabled) {
-    const previousValue = permissions[type];
-
-    setError("");
-    setMessage("");
-    setUpdating(type);
-
-    // Update the UI only after the backend accepts the change.
     try {
-      await updatePermission(type, enabled);
-
-      setPermissions((previous) => ({
-        ...previous,
-        [type]: enabled,
-      }));
-
-      setMessage(
-        `${categories.find((item) => item.type === type).title} ${enabled ? "enabled" : "disabled"
-        }.`
-      );
-
-      onChanged?.();
+      await updatePermission(type, nextState);
+      onPermissionChange?.(type, nextState);
     } catch (err) {
-      setError(err.message || "Could not update privacy settings.");
-
-      // Keep the previous setting if the request fails.
-      setPermissions((previous) => ({
-        ...previous,
-        [type]: previousValue,
-      }));
+      setErrorMessage(err.message || "Failed to update permission.");
     } finally {
-      setUpdating("");
+      setUpdatingType("");
     }
   }
 
   return (
-    <section className="privacy-panel">
-      <div className="privacy-heading">
-        <div className="privacy-icon">♧</div>
-        <div>
-          <p className="eyebrow">YOUR DATA, YOUR CHOICE</p>
-          <h2>Privacy Controls</h2>
-          <p className="section-description">
-            Choose which memory categories Chronis can access.
-          </p>
-        </div>
+    <section className="section-card">
+      <div className="section-header">
+        <h2 className="section-heading">Privacy Controls</h2>
+        <p className="section-description">
+          Toggle category permissions. When turned off, the backend stops returning that category&apos;s data across all endpoints.
+        </p>
       </div>
 
-      {loading ? (
-        <p className="privacy-status">Loading privacy settings…</p>
-      ) : (
-        <div className="privacy-list">
-          {categories.map((category) => {
-            const enabled = permissions[category.type] === true;
+      {errorMessage && (
+        <div className="banner banner-error">{errorMessage}</div>
+      )}
 
-            return (
-              <div className="privacy-row" key={category.type}>
-                <div className="privacy-copy">
-                  <h3>{category.title}</h3>
-                  <p>{category.description}</p>
-                  <span
-                    className={
-                      enabled
-                        ? "permission-label enabled"
-                        : "permission-label disabled"
-                    }
-                  >
-                    {enabled ? "Enabled" : "Disabled"}
+      <div className="privacy-list">
+        {CATEGORIES.map((cat) => {
+          const isEnabled = permissions[cat.type] !== false;
+          const isUpdating = updatingType === cat.type;
+
+          return (
+            <div
+              key={cat.type}
+              className={`privacy-row ${isEnabled ? "" : "row-disabled"}`}
+            >
+              <div className="privacy-info">
+                <div className="privacy-title-line">
+                  <h3 className="privacy-name">{cat.title}</h3>
+                  <span className={`badge ${isEnabled ? "badge-active" : "badge-disabled"}`}>
+                    {isEnabled ? "Enabled" : "Disabled"}
                   </span>
                 </div>
+                <p className="privacy-desc">{cat.description}</p>
+                {!isEnabled && (
+                  <p className="privacy-warning">
+                    Data blocked: backend returns 403 Forbidden for this category.
+                  </p>
+                )}
+              </div>
 
-                <label className="toggle-control">
+              <div className="privacy-action">
+                <label className="switch">
                   <input
                     type="checkbox"
-                    checked={enabled}
-                    disabled={updating !== ""}
-                    onChange={(event) =>
-                      handleToggle(category.type, event.target.checked)
-                    }
-                    aria-label={`Enable ${category.title} memories`}
+                    checked={isEnabled}
+                    disabled={isUpdating}
+                    onChange={() => handleToggle(cat.type, isEnabled)}
+                    aria-label={`Toggle ${cat.title} permission`}
                   />
-                  <span className="toggle-slider" />
+                  <span className="slider" />
                 </label>
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {updating && (
-        <p className="privacy-status">Updating privacy settings…</p>
-      )}
-
-      {error && <p className="form-error">{error}</p>}
-      {message && <p className="form-success">{message}</p>}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

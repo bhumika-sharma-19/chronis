@@ -158,6 +158,11 @@ def test_audit_log_records_actions(client):
         },
     )
 
+    client.put(
+        "/permissions/note",
+        json={"enabled": False},
+    )
+
     response = client.get("/audit-log")
 
     assert response.status_code == 200
@@ -165,4 +170,91 @@ def test_audit_log_records_actions(client):
     logs = data["audit_logs"]
 
     assert len(logs) > 0
-    assert any(log["action"] for log in logs)
+    actions = [log["action"] for log in logs]
+    assert "create_event" in actions
+    assert "update_permission" in actions
+    perm_entry = next(log for log in logs if log["action"] == "update_permission")
+    assert perm_entry["event_type"] == "note"
+    assert perm_entry["result"] == "success"
+    assert perm_entry["user_id"] == 1
+
+
+def test_privacy_enforcement_location_lifecycle(client):
+    # 1. Enables the location permission.
+    enable_res = client.put(
+        "/permissions/location",
+        json={"enabled": True},
+    )
+    assert enable_res.status_code == 200
+
+    # Create an enabled event (note) to verify enabled categories remain accessible
+    note_res = client.post(
+        "/events",
+        json={
+            "type": "note",
+            "title": "Visible note",
+            "content": "This note should stay accessible.",
+        },
+    )
+    assert note_res.status_code == 201
+    note_id = note_res.get_json()["id"]
+
+    # 2. Creates a location event successfully.
+    loc_res = client.post(
+        "/events",
+        json={
+            "type": "location",
+            "title": "Central Park",
+            "content": "Checked in at Central Park",
+        },
+    )
+    assert loc_res.status_code == 201
+    loc_id = loc_res.get_json()["id"]
+
+    # Confirm it is accessible when enabled
+    assert client.get(f"/events/{loc_id}").status_code == 200
+
+    # 3. Disables the location permission.
+    disable_res = client.put(
+        "/permissions/location",
+        json={"enabled": False},
+    )
+    assert disable_res.status_code == 200
+
+    # 4. Requests GET /events without a type filter.
+    timeline_res = client.get("/events")
+    assert timeline_res.status_code == 200
+    timeline_events = timeline_res.get_json()["events"]
+
+    # 5. Confirms that the location event is not present in the returned data,
+    # and that the enabled note event remains present.
+    assert not any(e["id"] == loc_id for e in timeline_events)
+    assert not any(e["type"] == "location" for e in timeline_events)
+    assert any(e["id"] == note_id for e in timeline_events)
+
+    # 6. Confirms that a direct request for that event is rejected according to
+    # the application's existing privacy behavior.
+    direct_res = client.get(f"/events/{loc_id}")
+    assert direct_res.status_code == 403
+    assert "disabled" in direct_res.get_json()["error"]
+
+    # Verify that creating a location event while disabled is blocked
+    blocked_create = client.post(
+        "/events",
+        json={
+            "type": "location",
+            "title": "Another location",
+            "content": "Should be blocked while category is disabled",
+        },
+    )
+    assert blocked_create.status_code == 403
+
+    # Verify that re-enabling the permission affects subsequent requests
+    client.put(
+        "/permissions/location",
+        json={"enabled": True},
+    )
+    restored_res = client.get(f"/events/{loc_id}")
+    assert restored_res.status_code == 200
+    assert restored_res.get_json()["id"] == loc_id
+
