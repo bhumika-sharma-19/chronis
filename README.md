@@ -41,8 +41,6 @@ chronis/
 └── README.md
 ```
 
-The structure above describes the intended layout. If your actual files differ, update this section to match your repository.
-
 ## Prerequisites
 
 - Python 3.10 or later
