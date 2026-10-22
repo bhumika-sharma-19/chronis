@@ -19,6 +19,47 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
 
 
+def init_db():
+    """Create database tables and seed initial demo user and default permissions."""
+    with app.app_context():
+        db.create_all()
+
+        user = db.session.get(User, 1)
+        if user is None:
+            user = User(name="Demo User")
+            user.id = 1
+            db.session.add(user)
+            db.session.commit()
+
+        categories = [
+            "conversation",
+            "location",
+            "physiological",
+            "note",
+        ]
+
+        for category in categories:
+            permission = Permission.query.filter_by(
+                user_id=1,
+                event_type=category,
+            ).first()
+
+            if permission is None:
+                permission = Permission(
+                    user_id=1,
+                    event_type=category,
+                    enabled=True,
+                )
+                db.session.add(permission)
+
+        db.session.commit()
+
+
+# Automatically initialize tables on startup if not in test mode
+if not app.config.get("TESTING", False):
+    init_db()
+
+
 
 # Home route
 @app.route("/", methods=["GET"])
@@ -409,41 +450,7 @@ def get_audit_log():
 
 # Create database tables and demo data, then start server
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-
-        # Create demo user if it does not exist
-        user = db.session.get(User, 1)
-
-        if user is None:
-            user = User(name="Demo User")
-            user.id = 1
-            db.session.add(user)
-            db.session.commit()
-
-        # Create default permissions
-        categories = [
-            "conversation",
-            "location",
-            "physiological",
-            "note",
-        ]
-
-        for category in categories:
-            permission = Permission.query.filter_by(
-                user_id=user.id,
-                event_type=category,
-            ).first()
-
-            if permission is None:
-                permission = Permission(
-                    user_id=user.id,
-                    event_type=category,
-                    enabled=True,
-                )
-                db.session.add(permission)
-
-        db.session.commit()
+    init_db()
     debug_mode = os.getenv("FLASK_DEBUG", "False").strip().lower() in (
         "true",
         "1",
